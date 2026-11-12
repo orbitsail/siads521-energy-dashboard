@@ -1,0 +1,208 @@
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+st.set_page_config(page_title="Electricity mix dashboard", layout="wide")
+
+# One colour per energy source, reused in every chart
+SOURCES = ["coal", "oil", "gas", "nuclear", "hydro", "wind", "solar", "biofuel", "other_renewable"]
+SRC_COLORS = {
+    "coal": "#5c4033", "oil": "#8d6e63", "gas": "#9e9e9e", "nuclear": "#7b4fa3",
+    "hydro": "#1f77b4", "wind": "#17a2b8", "solar": "#f2c12e",
+    "biofuel": "#6a994e", "other_renewable": "#a7c957",
+}
+SRC_LABELS = {s: s.replace("_", " ").title() for s in SOURCES}
+FOCUS_C, GREY, REGION_C = "#d62728", "#c4c4c4", "#2a6f97"
+CONT_COLORS = {"Africa": "#e09f3e", "Asia": "#c1121f", "Europe": "#2a6f97",
+               "North America": "#588157", "South America": "#7b4fa3", "Oceania": "#00a8a8"}
+LC = "low_carbon_share_elec"
+
+
+@st.cache_data
+def load():
+    return pd.read_csv("data/energy_clean.csv")
+
+
+df = load()
+
+# ---------------- sidebar ----------------
+st.sidebar.header("Controls")
+regions = ["All"] + sorted(df["continent"].unique())
+region = st.sidebar.selectbox("Region (continent)", regions)
+rdf = df if region == "All" else df[df["continent"] == region]
+countries = sorted(rdf["country"].unique())
+focus = st.sidebar.selectbox("Focus country", countries,
+                             index=countries.index("Germany") if "Germany" in countries else 0)
+y0, y1 = st.sidebar.slider("Year range", 2000, 2023, (2000, 2023))
+st.sidebar.caption("Year range drives every chart; region drives B-E; focus country drives A, D and highlights in B, C, E.")
+
+st.caption("Data: [Our World in Data – Energy dataset (CC BY 4.0)](https://github.com/owid/energy-data)")
+
+
+def lc_at(frame, year):
+    return frame[frame["year"] == year].set_index("country")[LC]
+
+
+# ---------------- headline ----------------
+fl = df[df["country"] == focus].set_index("year")[LC]
+a, b = fl.get(y0, np.nan), fl.get(y1, np.nan)
+if y0 == y1:
+    st.title(f"{focus}: pick a year range to see the change")
+    st.info("Start and end year are equal. Widen the year range to see trends.")
+    st.stop()
+if pd.notna(a) and pd.notna(b):
+    verb = "rose" if b > a else "fell" if b < a else "stayed flat"
+    st.title(f"{focus}'s low-carbon electricity share {verb} from {a:.0f}% to {b:.0f}% between {y0} and {y1}")
+else:
+    st.title(f"{focus}: low-carbon electricity, {y0}–{y1}")
+    st.info(f"No low-carbon share data for {focus} in {y0} and/or {y1}.")
+
+base_layout = dict(template="plotly_white", margin=dict(l=10, r=10, t=60, b=10), height=420,
+                   title_font_size=15)
+
+
+# ---------------- A: streamgraph ----------------
+def streamgraph():
+    d = df[(df["country"] == focus) & df["year"].between(y0, y1)].sort_values("year")
+    if d[[f"{s}_electricity" for s in SOURCES]].dropna(how="all").empty:
+        return None
+    vals = d[[f"{s}_electricity" for s in SOURCES]].fillna(0).to_numpy()
+    total = vals.sum(axis=1)
+    years = d["year"].to_numpy()
+    cum = -total / 2                       # centred baseline
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=years, y=cum, mode="lines", line=dict(width=0),
+                             hoverinfo="skip", showlegend=False))
+    for i, s in enumerate(SOURCES):
+        cum = cum + vals[:, i]
+        fig.add_trace(go.Scatter(
+            x=years, y=cum, mode="lines", line=dict(width=0), fill="tonexty",
+            fillcolor=SRC_COLORS[s], name=SRC_LABELS[s], customdata=vals[:, i],
+            hovertemplate=f"{SRC_LABELS[s]}: " + "%{customdata:.1f} TWh<extra>%{x}</extra>"))
+    fig.update_layout(**base_layout, hovermode="x unified",
+                      title=f"A. {focus}: how the electricity mix changed (band thickness = TWh)")
+    fig.update_yaxes(showticklabels=False, zeroline=False, title="Generation by source (band thickness = TWh)")
+    fig.update_xaxes(title="Year", dtick=2 if y1 - y0 > 10 else 1)
+    return fig
+
+
+# ---------------- B: slope chart ----------------
+def slope():
+    s0, s1 = lc_at(rdf, y0), lc_at(rdf, y1)
+    s = pd.concat([s0.rename("a"), s1.rename("b")], axis=1).dropna()
+    if s.empty:
+        return None
+    s["chg"] = s["b"] - s["a"]
+    top = set(s.nlargest(3, "chg").index) | set(s.nsmallest(3, "chg").index)
+    fig = go.Figure()
+    for c, r in s.iterrows():
+        if c == focus or c in top:
+            continue
+        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines", line=dict(color=GREY, width=1),
+                                 hovertemplate=f"{c}: %{{y:.1f}}%<extra></extra>", showlegend=False))
+    for c in top - {focus}:
+        r = s.loc[c]
+        col = SRC_COLORS["wind"] if r.chg > 0 else SRC_COLORS["coal"]
+        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines+markers+text", text=["", f"{c} ({r.chg:+.0f})"],
+                                 textposition="middle right", line=dict(color=col, width=2), marker=dict(size=6),
+                                 hovertemplate=f"{c}: %{{y:.1f}}%<extra></extra>", showlegend=False))
+    if focus in s.index:
+        r = s.loc[focus]
+        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines+markers+text",
+                                 text=[f"{focus} {r.a:.0f}%", f"{focus} {r.b:.0f}%"],
+                                 textposition=["middle left", "middle right"], textfont=dict(color=FOCUS_C, size=13),
+                                 line=dict(color=FOCUS_C, width=5), marker=dict(size=10),
+                                 hovertemplate=f"{focus}: %{{y:.1f}}%<extra></extra>", showlegend=False))
+    fig.update_layout(**base_layout, title=f"B. Low-carbon share, {y0} vs {y1}: who climbed, who slid ({region})")
+    fig.update_xaxes(tickvals=[0, 1], ticktext=[str(y0), str(y1)], range=[-0.35, 1.45], title="Year")
+    fig.update_yaxes(range=[0, 100], title="Low-carbon share of electricity (%)")
+    return fig
+
+
+# ---------------- C: scatter ----------------
+def scatter():
+    d = rdf[rdf["year"] == y1].dropna(subset=["energy_per_capita", "carbon_intensity_elec", "population"])
+    d = d[d["energy_per_capita"] > 0]
+    if d.empty:
+        return None
+    sizeref = 2 * d["population"].max() / (45 ** 2)
+    fig = go.Figure()
+    for cont, g in d.groupby("continent"):
+        fig.add_trace(go.Scatter(
+            x=g["energy_per_capita"], y=g["carbon_intensity_elec"], mode="markers", name=cont,
+            marker=dict(size=g["population"], sizemode="area", sizeref=sizeref, sizemin=4,
+                        color=CONT_COLORS.get(cont), opacity=0.65, line=dict(width=0.5, color="white")),
+            text=g["country"], customdata=g["population"] / 1e6,
+            hovertemplate="%{text}<br>%{x:,.0f} kWh/person<br>%{y:.0f} gCO2/kWh<br>pop %{customdata:.1f} M<extra></extra>"))
+    f = d[d["country"] == focus]
+    if not f.empty:
+        fig.add_trace(go.Scatter(
+            x=f["energy_per_capita"], y=f["carbon_intensity_elec"], mode="markers+text", text=f["country"],
+            textposition="top center", showlegend=False, textfont=dict(color=FOCUS_C, size=13),
+            marker=dict(size=f["population"], sizemode="area", sizeref=sizeref, sizemin=4, color="rgba(0,0,0,0)",
+                        line=dict(width=3, color=FOCUS_C)), hoverinfo="skip"))
+    fig.update_layout(**base_layout, title=f"C. {y1}: richer-energy countries are not automatically cleaner (bubble = population)")
+    fig.update_xaxes(type="log", title="Energy use per person (kWh, log scale)")
+    fig.update_yaxes(title="Carbon intensity of electricity (gCO2/kWh)")
+    return fig
+
+
+# ---------------- D: line chart ----------------
+def lines():
+    d = df[df["year"].between(y0, y1)]
+    fig = go.Figure()
+    allm = d.groupby("year")[LC].median()
+    fig.add_trace(go.Scatter(x=allm.index, y=allm.values, name="Median, all countries",
+                             line=dict(color=GREY, width=2, dash="dot"), hovertemplate="%{y:.1f}%<extra>All median</extra>"))
+    if region != "All":
+        rm = d[d["continent"] == region].groupby("year")[LC].median()
+        fig.add_trace(go.Scatter(x=rm.index, y=rm.values, name=f"Median, {region}", line=dict(color=REGION_C, width=2),
+                                 hovertemplate="%{y:.1f}%<extra>Region median</extra>"))
+    f = d[d["country"] == focus].sort_values("year")
+    if f[LC].notna().any():
+        fig.add_trace(go.Scatter(x=f["year"], y=f[LC], name=focus, line=dict(color=FOCUS_C, width=4),
+                                 connectgaps=False, hovertemplate="%{y:.1f}%<extra>" + focus + "</extra>"))
+    fig.update_layout(**base_layout, hovermode="x unified",
+                      title=f"D. Is {focus} pulling ahead of its region and the world?")
+    fig.update_xaxes(title="Year")
+    fig.update_yaxes(range=[0, 100], title="Low-carbon share of electricity (%)")
+    return fig
+
+
+# ---------------- E: bar chart ----------------
+def bars():
+    s0, s1 = lc_at(rdf, y0), lc_at(rdf, y1)
+    chg = (s1 - s0).dropna().sort_values(ascending=False).head(15)
+    if chg.empty:
+        return None
+    chg = chg.iloc[::-1]                    # largest on top in a horizontal chart
+    colors = [FOCUS_C if c == focus else REGION_C for c in chg.index]
+    fig = go.Figure(go.Bar(x=chg.values, y=chg.index, orientation="h", marker_color=colors,
+                           hovertemplate="%{y}: %{x:+.1f} pp<extra></extra>"))
+    note = "" if focus in chg.index else f" ({focus} not in top 15)"
+    fig.update_layout(**base_layout, title=f"E. Biggest gains in low-carbon share, {y0}→{y1}{note}")
+    fig.update_xaxes(title="Change in low-carbon share (percentage points)", rangemode="tozero")
+    fig.update_yaxes(title="")
+    return fig
+
+
+def show(fig, key, msg):
+    if fig is None:
+        st.info(msg)
+    else:
+        st.plotly_chart(fig, width="stretch", key=key)
+
+
+nodata = f"No data for {focus} in this period."
+c1, c2 = st.columns(2)
+with c1:
+    show(streamgraph(), "A", nodata)
+    show(scatter(), "C", "No scatter data for this selection.")
+    show(bars(), "E", "No countries with data at both start and end year.")
+with c2:
+    show(slope(), "B", "No countries with data at both start and end year.")
+    show(lines(), "D", nodata)
+    st.markdown("**How to read this page**")
+    st.markdown("- **A** band thickness = TWh generated by each source.\n- **B/E** only countries with data in both years.\n"
+                "- **C** uses the end year only.\n- Same colour = same source in every chart.")
