@@ -87,6 +87,22 @@ def streamgraph():
     return fig
 
 
+def spread(ys, gap=4.0, lo=0.0, hi=100.0):
+    """Label y positions pushed apart so neighbours are >= gap pp apart (data points untouched)."""
+    order = sorted(range(len(ys)), key=lambda i: ys[i])
+    pos = [ys[i] for i in order]
+    for k in range(1, len(pos)):
+        pos[k] = max(pos[k], pos[k - 1] + gap)
+    if pos and pos[-1] > hi:                # ran off the top: shift back down
+        pos[-1] = hi
+        for k in range(len(pos) - 2, -1, -1):
+            pos[k] = min(pos[k], pos[k + 1] - gap)
+    out = [0.0] * len(ys)
+    for k, i in enumerate(order):
+        out[i] = max(pos[k], lo)
+    return out
+
+
 # ---------------- B: slope chart ----------------
 def slope():
     s0, s1 = lc_at(rdf, y0), lc_at(rdf, y1)
@@ -95,25 +111,34 @@ def slope():
         return None
     s["chg"] = s["b"] - s["a"]
     top = set(s.nlargest(3, "chg").index) | set(s.nsmallest(3, "chg").index)
+    many = len(s) > 60                      # "All" regions: thin, faint background lines
+    bg_w, bg_op = (0.6, 0.25) if many else (1, 1)
     fig = go.Figure()
     for c, r in s.iterrows():
         if c == focus or c in top:
             continue
-        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines", line=dict(color=GREY, width=1),
+        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines",
+                                 line=dict(color=GREY, width=bg_w), opacity=bg_op,
                                  hovertemplate=f"{c}: %{{y:.1f}}%<extra></extra>", showlegend=False))
+    left_lab, right_lab = [], []            # (y, text, colour, size) -> drawn as annotations
     for c in top - {focus}:
         r = s.loc[c]
         col = SRC_COLORS["wind"] if r.chg > 0 else SRC_COLORS["coal"]
-        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines+markers+text", text=["", f"{c} ({r.chg:+.0f})"],
-                                 textposition="middle right", line=dict(color=col, width=2), marker=dict(size=6),
+        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines+markers",
+                                 line=dict(color=col, width=2), marker=dict(size=6),
                                  hovertemplate=f"{c}: %{{y:.1f}}%<extra></extra>", showlegend=False))
+        right_lab.append((r.b, f"{c} ({r.chg:+.0f})", col, 12))
     if focus in s.index:
         r = s.loc[focus]
-        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines+markers+text",
-                                 text=[f"{focus} {r.a:.0f}%", f"{focus} {r.b:.0f}%"],
-                                 textposition=["middle left", "middle right"], textfont=dict(color=FOCUS_C, size=13),
+        fig.add_trace(go.Scatter(x=[0, 1], y=[r.a, r.b], mode="lines+markers",
                                  line=dict(color=FOCUS_C, width=5), marker=dict(size=10),
                                  hovertemplate=f"{focus}: %{{y:.1f}}%<extra></extra>", showlegend=False))
+        left_lab.append((r.a, f"{focus} {r.a:.0f}%", FOCUS_C, 13))
+        right_lab.append((r.b, f"{focus} {r.b:.0f}%", FOCUS_C, 13))
+    for labs, x, anchor, shift in ((left_lab, 0, "right", -8), (right_lab, 1, "left", 8)):
+        for (y, text, col, size), ly in zip(labs, spread([l[0] for l in labs])):
+            fig.add_annotation(x=x, y=ly, text=text, showarrow=False, xanchor=anchor, xshift=shift,
+                               font=dict(color=col, size=size))
     fig.update_layout(**base_layout, title=f"B. Low-carbon share, {y0} vs {y1}: who climbed, who slid ({region})")
     fig.update_xaxes(tickvals=[0, 1], ticktext=[str(y0), str(y1)], range=[-0.35, 1.45], title="Year")
     fig.update_yaxes(range=[0, 100], title="Low-carbon share of electricity (%)")
@@ -142,7 +167,8 @@ def scatter():
             textposition="top center", showlegend=False, textfont=dict(color=FOCUS_C, size=13),
             marker=dict(size=f["population"], sizemode="area", sizeref=sizeref, sizemin=4, color="rgba(0,0,0,0)",
                         line=dict(width=3, color=FOCUS_C)), hoverinfo="skip"))
-    fig.update_layout(**base_layout, title=f"C. {y1}: richer-energy countries are not automatically cleaner (bubble = population)")
+    fig.update_layout(**base_layout, showlegend=d["continent"].nunique() > 1,
+                      title=f"C. {y1}: richer-energy countries are not automatically cleaner (bubble = population)")
     fig.update_xaxes(type="log", title="Energy use per person (kWh, log scale)")
     fig.update_yaxes(title="Carbon intensity of electricity (gCO2/kWh)")
     return fig
