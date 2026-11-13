@@ -39,7 +39,8 @@ md(f"""
 
 Over the last twenty years almost every country has added wind and solar. But a country's *share* of clean electricity can rise for two very different reasons: it builds clean power, or the rest of its power disappears. This dashboard lets you compare 160 countries from 2000 to 2023 and then drill into any one of them to see which of the two is happening.
 
-**Live dashboard:** [{LIVE}]({LIVE}) (on the free tier it may need about a minute to wake up)
+**Live dashboard:** [{LIVE}]({LIVE}) (on the free tier it may need about a minute to wake up)  
+**Video walkthrough (56 s):** [https://drive.google.com/file/d/1xX1RcMX277C-g4G_qBN3FzN4lbgF78j7/view?usp=sharing](https://drive.google.com/file/d/1xX1RcMX277C-g4G_qBN3FzN4lbgF78j7/view?usp=sharing)  
 **Code and data:** [{REPO}]({REPO})
 
 {img("hero_top.png", "Dashboard, default view")}

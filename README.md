@@ -2,8 +2,9 @@
 
 An interactive dashboard that explores how the electricity mix of 160 countries changed between 2000 and 2023, and whether a rising "low-carbon share" really means a country is decarbonizing. Built with Streamlit and Plotly for SIADS 521 (Visual Exploration of Data), University of Michigan MADS, Assignment 3.
 
-- **Live dashboard:** _link coming after deployment_
-- **Video walkthrough:** _link coming_
+- **Live dashboard:** https://siads521-energy.streamlit.app
+- **Video walkthrough:** https://drive.google.com/file/d/1xX1RcMX277C-g4G_qBN3FzN4lbgF78j7/view?usp=sharing
+- **Narrative notebook:** [notebook/A3_energy_dashboard.ipynb](notebook/A3_energy_dashboard.ipynb)
 
 ## Data
 
